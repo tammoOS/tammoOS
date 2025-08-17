@@ -1,6 +1,11 @@
+
 Informations:
 tammoOS based on Ubuntu 18.04 32Bit - 24.04 64Bit
 This OS contains 3 Operating Systems. (macOS Linux Ubuntu Windows)
-Hardware Support:
+
+Hardware Support and requiments:
 I tested Version 1.0 and 1.1 on an Intel Core 2 Duo and Intel Atom with 2 Gigs of Ram. These 2 Versions working fine on old PCs.
-tammoOS version 2.0 is only supported for 64Bit PCs. I tested this Version on an HP Pavilion Laptop from 2013 with 4 Gigs of Ram and It work pretty good.
+tammoOS version 2.0 is only supported for 64Bit PCs. I tested this Version on an HP Pavilion Laptop from 2013 with 4 Gigs of Ram and it work pretty good.
+At least you need 2 Gigs of Ram for the 32 Bit Version and 4 Gigs of Ram for the 64 Bit Version for a good performance.
+
+If you are interested you can download the iso here --->
