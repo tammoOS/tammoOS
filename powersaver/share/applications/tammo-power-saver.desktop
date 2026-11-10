@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Power Mode
+GenericName=Power Management
+Comment=Switch between Balanced, Power Saver and Performance
+Exec=@BINDIR@/tammo-power-saver gui
+Icon=power-profile-balanced-symbolic
+Terminal=false
+Categories=System;Settings;
+Keywords=power;battery;saver;performance;profile;zorin;
+StartupNotify=false

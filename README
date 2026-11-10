@@ -17,25 +17,15 @@ If you are interested you can download the iso here --->
 
 More infos can be found here: ---> https://bit.ly/tammoOS
 
-Power Saver (like Zorin OS)
---------------------------
+Power Saver (Zorin OS style)
+----------------------------
 
-tammoOS includes a Zorin OS-style Power Saver. It lives in the `powersaver/` folder.
+tammoOS can use the same Balanced, Power Saver and Performance modes as Zorin OS.
+Install the optional switcher with:
 
-What it gives you:
-- Power profiles: Power Saver, Balanced and Performance, the same backend (power-profiles-daemon) that Zorin OS uses
-- On tammoOS 2.x the profiles also show up in Settings -> Power and in the Quick Settings menu, and the system switches to Power Saver automatically when the battery runs low
-- On tammoOS 1.x (Ubuntu 18.04 base) it uses TLP as the power backend, since that base has no power-profiles-daemon
-- Battery percentage in the top bar, screen dimming and automatic suspend
+    cd powersaver
+    sudo ./install.sh
 
-Install it (after a normal tammoOS install):
-
-    sudo bash powersaver/install.sh
-
-Then use it from a terminal:
-
-    tammo-powersaver status     show the active power profile
-    tammo-powersaver set power-saver|balanced|performance
-    tammo-powersaver toggle     flip between balanced and power-saver
-
-There is also a "tammoOS Power Saver" entry in the applications menu.
+It adds a "Power Mode" application-menu entry, a one-click "Power Saver"
+launcher, and the `tammo-power-saver` terminal command. More information:
+[powersaver/README.md](powersaver/README.md)
