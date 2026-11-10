@@ -36,6 +36,9 @@ case "${1:-}" in
     get)
         cat "$state"
         ;;
+    version)
+        echo "0.21-test"
+        ;;
     set)
         if [ "${TAMMO_TEST_FAIL:-0}" = "1" ]; then
             echo "simulated power driver error" >&2
@@ -58,12 +61,30 @@ esac
 FAKE
 chmod +x "$WORK/bin/powerprofilesctl"
 
+cat > "$WORK/bin/zenity" <<'FAKE'
+#!/usr/bin/env bash
+set -u
+if [ "${1:-}" = "--version" ]; then
+    echo "3.44.0"
+    exit 0
+fi
+if [ "${1:-}" = "--error" ]; then
+    if [ -n "${TAMMO_TEST_LOG:-}" ]; then
+        printf '%s\n' "$*" >> "$TAMMO_TEST_LOG"
+    fi
+    exit 0
+fi
+printf 'Power Saver|power-saver\n'
+FAKE
+chmod +x "$WORK/bin/zenity"
+
 export PATH="$WORK/bin:$PATH"
 
 # Shell syntax checks.
 check "bin/tammo-power-saver has valid bash syntax" bash -n "$ROOT/bin/tammo-power-saver"
 check "install.sh has valid bash syntax" bash -n "$ROOT/install.sh"
 check "uninstall.sh has valid bash syntax" bash -n "$ROOT/uninstall.sh"
+check "diagnose.sh has valid bash syntax" bash -n "$ROOT/diagnose.sh"
 
 # Fake backend behaviour.
 check "get returns the initial profile" \
@@ -92,6 +113,17 @@ check "backend failure is reported" \
 
 check "backend failure leaves the profile unchanged" \
     bash -c 'TAMMO_TEST_FAIL=1 "$1" set balanced >/dev/null 2>&1 || true; test "$(cat "$TAMMO_TEST_STATE")" = power-saver' _ "$ROOT/bin/tammo-power-saver"
+
+check "doctor prints backend details" \
+    bash -c '"$1" doctor | grep -q "PPD binary"' _ "$ROOT/bin/tammo-power-saver"
+
+printf 'balanced\n' > "$TAMMO_TEST_STATE"
+check "gui applies the selected profile" \
+    bash -c 'DISPLAY=:99 "$1" gui >/dev/null 2>&1 && test "$(cat "$TAMMO_TEST_STATE")" = power-saver' _ "$ROOT/bin/tammo-power-saver"
+
+: > "$WORK/zenity.log"
+check "gui shows an error dialog when the backend fails" \
+    bash -c 'TAMMO_TEST_FAIL=1 TAMMO_TEST_LOG="$1" DISPLAY=:99 "$2" gui >/dev/null 2>&1 || true; grep -q -- "--error" "$1"' _ "$WORK/zenity.log" "$ROOT/bin/tammo-power-saver"
 
 check "gui without a display fails clearly" \
     bash -c '! env -u DISPLAY -u WAYLAND_DISPLAY "$1" gui </dev/null >/dev/null 2>&1' _ "$ROOT/bin/tammo-power-saver"

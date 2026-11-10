@@ -154,6 +154,25 @@ notify() {
     fi
 }
 
+show_error() {
+    local message=$1
+
+    if [ -t 1 ]; then
+        err "$message"
+        return 0
+    fi
+
+    if has zenity && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
+        zenity --error --title="Power Mode" --text="$message" >/dev/null 2>&1 || true
+    elif has notify-send && [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+        notify-send -u critical -a "Power Mode" "Power Mode" "$message" >/dev/null 2>&1 || true
+    elif has xmessage && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
+        xmessage -center -title "Power Mode" "$message" >/dev/null 2>&1 || true
+    else
+        err "$message"
+    fi
+}
+
 legacy_apply() {
     local profile=$1 governor file now
 
@@ -250,6 +269,7 @@ set_profile() {
 
         warn "Available modes: $(available_profiles | tr '\n' ' ')"
         warn "You can force the CPU-governor fallback with: sudo $PROGRAM legacy $profile"
+        warn "Run '$PROGRAM doctor' for diagnostics."
         return 1
     fi
 
@@ -289,14 +309,90 @@ status() {
     done < <(available_profiles)
 }
 
+doctor() {
+    say "${BOLD}tammoOS Power Saver diagnostics${RESET}"
+    say "Program:      $PROGRAM $VERSION"
+    say "Binary:       $SELF"
+
+    if [ -r /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        say "OS:           ${PRETTY_NAME:-unknown}"
+    else
+        say "OS:           unknown"
+    fi
+
+    say "Kernel:       $(uname -r 2>/dev/null || printf 'unknown')"
+    say "Desktop:      ${XDG_CURRENT_DESKTOP:-unknown} (${XDG_SESSION_TYPE:-unknown})"
+    say "User:         $(id -un) (uid $(id -u))"
+
+    if ppd_installed; then
+        say "PPD binary:   $(command -v powerprofilesctl)"
+        say "PPD version:  $(powerprofilesctl version 2>/dev/null || printf 'unknown')"
+        if ppd_service_active; then
+            say "PPD service:  active"
+        else
+            say "PPD service:  not active"
+        fi
+        say "PPD current:  $(powerprofilesctl get 2>/dev/null || printf 'unavailable')"
+        say "PPD profiles: $(available_profiles | tr '\n' ' ')"
+    else
+        say "PPD binary:   not installed"
+    fi
+
+    if has systemctl; then
+        if systemctl is-active --quiet tlp.service 2>/dev/null; then
+            say "TLP service:  active (can conflict with power-profiles-daemon)"
+        else
+            say "TLP service:  not active"
+        fi
+    fi
+
+    say "Governors:    $(cpu_governors | tr '\n' ' ')"
+    if has zenity; then
+        say "Zenity:       $(zenity --version 2>/dev/null || printf 'present')"
+    else
+        say "Zenity:       missing"
+    fi
+    if has notify-send; then
+        say "Notifications: available"
+    else
+        say "Notifications: notify-send missing"
+    fi
+    say "DBus session: ${DBUS_SESSION_BUS_ADDRESS:-missing}"
+    say "Desktop entries:"
+    local found=0 entry
+    for entry in \
+        /usr/local/share/applications/tammo-power-saver.desktop \
+        /usr/local/share/applications/tammo-power-saver-toggle.desktop \
+        /usr/share/applications/tammo-power-saver.desktop \
+        /usr/share/applications/tammo-power-saver-toggle.desktop; do
+        if [ -e "$entry" ]; then
+            say "  - $entry"
+            found=1
+        fi
+    done
+    [ "$found" -eq 1 ] || say "  - none found"
+}
+
 toggle() {
-    local current
+    local current output
+
     current=$(current_profile)
     if [ "$current" = "power-saver" ]; then
-        set_profile balanced
+        if output=$(set_profile balanced 2>&1); then
+            [ -t 1 ] && printf '%s\n' "$output"
+            return 0
+        fi
     else
-        set_profile power-saver
+        if output=$(set_profile power-saver 2>&1); then
+            [ -t 1 ] && printf '%s\n' "$output"
+            return 0
+        fi
     fi
+
+    show_error "${output:-Could not change the power mode.}"
+    return 1
 }
 
 menu() {
@@ -345,12 +441,16 @@ menu() {
 
 gui() {
     if ! has zenity; then
-        notify "Power Mode" "Install zenity to use the graphical switcher, or run: tammo-power-saver menu" "preferences-system-power"
         if [ -t 0 ]; then
             menu
             return $?
         fi
-        die "zenity is not installed. Run: sudo apt install zenity"
+        if has x-terminal-emulator; then
+            x-terminal-emulator -e "$SELF" menu && return 0
+        fi
+        notify "Power Mode" "Install zenity to use the graphical switcher, or run: tammo-power-saver menu" "preferences-system-power"
+        show_error "The graphical switcher needs zenity. Run 'sudo apt install zenity' or use 'tammo-power-saver menu' in a terminal."
+        exit 1
     fi
 
     if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
@@ -381,16 +481,22 @@ gui() {
         --text="Current mode: $(profile_pretty "$current")" \
         --column="Mode" \
         --column="Profile" \
-        --hide-column=2 \
-        --print-column=2 \
-        --width=380 \
+        --separator="|" \
+        --width=420 \
         --height=320 \
         "${rows[@]}" 2>/dev/null) || exit 0
 
     [ -n "$output" ] || exit 0
 
+    case "$output" in
+        *"|"*) output=${output##*|} ;;
+        "Power Saver") output=power-saver ;;
+        "Balanced") output=balanced ;;
+        "Performance") output=performance ;;
+    esac
+
     if ! output=$(set_profile "$output" 2>&1); then
-        zenity --error --title="Power Mode" --text="${output:-Could not change the power mode.}" >/dev/null 2>&1 || true
+        show_error "${output:-Could not change the power mode.}"
         exit 1
     fi
 }
@@ -405,6 +511,7 @@ Commands:
   menu              Interactive terminal menu (default)
   gui               Graphical switcher (requires zenity)
   status            Show the current mode and backend
+  doctor            Print diagnostics for troubleshooting
   list              List available modes (one per line)
   get               Print the current mode
   set PROFILE       Set balanced, power-saver, or performance
@@ -433,6 +540,7 @@ case "${1:-}" in
         ;;
     gui)                       gui ;;
     status)                    status ;;
+    doctor)                    doctor ;;
     get)                       current_profile; printf '\n' ;;
     list)                      available_profiles ;;
     set)

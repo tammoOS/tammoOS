@@ -29,13 +29,27 @@ not want to dig through settings.
 ```bash
 git clone https://github.com/tammoOS/tammoOS.git
 cd tammoOS/powersaver
-sudo ./install.sh
+sudo bash install.sh
 ```
 
 Then open **Power Mode** from the application menu.
 
-> If you downloaded a ZIP instead, extract it, open a terminal in the
-> `powersaver` folder, and run `sudo ./install.sh`.
+> `sudo bash install.sh` also works if the executable bit was lost (for
+> example after downloading a ZIP).
+
+### No git installed?
+
+Download the repository archive instead:
+
+```bash
+wget -O tammoOS.tar.gz https://github.com/tammoOS/tammoOS/archive/refs/heads/main.tar.gz
+tar xzf tammoOS.tar.gz
+cd tammoOS-main/powersaver
+sudo bash install.sh
+```
+
+If `wget` is missing too, install it with `sudo apt install wget`, or use the
+**Code → Download ZIP** button on GitHub and extract the archive.
 
 ## Use
 
@@ -51,6 +65,7 @@ Then open **Power Mode** from the application menu.
 tammo-power-saver                 # interactive menu
 tammo-power-saver gui             # graphical switcher
 tammo-power-saver status          # current mode + backend
+tammo-power-saver doctor          # diagnostics for troubleshooting
 tammo-power-saver set power-saver # switch directly
 tammo-power-saver set balanced
 tammo-power-saver set performance # only if your CPU supports it
@@ -76,7 +91,7 @@ Mode feature itself is the `power-saver` profile from
 
 ```bash
 cd powersaver
-sudo ./uninstall.sh
+sudo bash uninstall.sh
 ```
 
 `power-profiles-daemon` is intentionally left installed because GNOME and other
@@ -84,11 +99,52 @@ system components can use it.
 
 ## Troubleshooting
 
-**`powerprofilesctl: command not found`**
+**First, run the diagnostic command and include its output when asking for help**
 
 ```bash
-sudo apt install power-profiles-daemon
+tammo-power-saver doctor
+```
+
+If the installer itself failed, you can still run the standalone diagnostic
+script from the repository:
+
+```bash
+bash powersaver/diagnose.sh
+```
+
+It is read-only and safe to run without root.
+
+**`git: command not found`**
+
+```bash
+sudo apt update && sudo apt install -y git
+```
+
+Or use the archive download described under [Install](#install).
+
+**`sudo: ./install.sh: command not found` / `Permission denied`**
+
+Make sure you are in the `powersaver` folder and run the script through bash:
+
+```bash
+cd tammoOS/powersaver
+sudo bash install.sh
+```
+
+**The installer finishes but no profile changes**
+
+Run:
+
+```bash
+tammo-power-saver doctor
+tammo-power-saver status
+```
+
+If `PPD service` is not active:
+
+```bash
 sudo systemctl enable --now power-profiles-daemon
+sudo systemctl status power-profiles-daemon --no-pager
 ```
 
 **"Failed to activate CPU driver" / profile does not change**
@@ -98,6 +154,31 @@ and list the modes that are available. You can try:
 
 ```bash
 sudo tammo-power-saver legacy power-saver
+```
+
+**The installer reports no working power backend**
+
+The installer now stops with an error instead of silently succeeding. Check the
+diagnostics above. On tammoOS 1.x / Ubuntu 18.04, `power-profiles-daemon` does
+not exist and the legacy CPU-governor fallback should be used.
+
+**TLP is installed**
+
+TLP and `power-profiles-daemon` can fight over the CPU. If profiles do not
+change:
+
+```bash
+sudo systemctl disable --now tlp
+sudo systemctl enable --now power-profiles-daemon
+```
+
+**The Power Mode menu entry is missing**
+
+Log out and back in once so the application menu refreshes. You can always use
+the terminal in the meantime:
+
+```bash
+tammo-power-saver menu
 ```
 
 **The graphical switcher does not open**

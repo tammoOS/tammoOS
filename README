@@ -24,7 +24,7 @@ tammoOS can use the same Balanced, Power Saver and Performance modes as Zorin OS
 Install the optional switcher with:
 
     cd powersaver
-    sudo ./install.sh
+    sudo bash install.sh
 
 It adds a "Power Mode" application-menu entry, a one-click "Power Saver"
 launcher, and the `tammo-power-saver` terminal command. More information:
