@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Power Saver
+Comment=Toggle Zorin-style Power Saver mode on or off
+Exec=@BINDIR@/tammo-power-saver toggle
+Icon=power-profile-power-saver-symbolic
+Terminal=false
+Categories=System;Settings;
+Keywords=power;battery;saver;profile;zorin;
+StartupNotify=false

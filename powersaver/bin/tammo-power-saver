@@ -1,0 +1,572 @@
+#!/usr/bin/env bash
+#
+# tammo-power-saver - Zorin OS-style power modes for tammoOS
+#
+# Zorin OS' "Power Saver" mode is the power-saver profile provided by
+# power-profiles-daemon.  This tool exposes the same Balanced / Power Saver /
+# Performance switch in a simple tammoOS-friendly way.
+#
+# Usage: tammo-power-saver [menu|gui|status|list|get|set PROFILE|toggle|legacy PROFILE|help]
+
+set -u
+
+PROGRAM=${0##*/}
+VERSION="1.0.0"
+VALID_PROFILES="balanced power-saver performance"
+
+SELF=$0
+if command -v readlink >/dev/null 2>&1; then
+    SELF=$(readlink -f -- "$0" 2>/dev/null || printf '%s' "$0")
+fi
+
+if [ -t 1 ]; then
+    BOLD=$'\033[1m'
+    RED=$'\033[31m'
+    GREEN=$'\033[32m'
+    YELLOW=$'\033[33m'
+    RESET=$'\033[0m'
+else
+    BOLD=""
+    RED=""
+    GREEN=""
+    YELLOW=""
+    RESET=""
+fi
+
+say()  { printf '%s\n' "$*"; }
+ok()   { printf '%s%s%s\n' "$GREEN" "$*" "$RESET"; }
+warn() { printf '%s%s%s\n' "$YELLOW" "$*" "$RESET" >&2; }
+err()  { printf '%s%s%s\n' "$RED" "$*" "$RESET" >&2; }
+die()  { err "Error: $*"; exit 1; }
+
+has() { command -v "$1" >/dev/null 2>&1; }
+
+ppd_installed() { has powerprofilesctl; }
+
+ppd_service_active() {
+    has systemctl || return 1
+    systemctl is-active --quiet power-profiles-daemon.service 2>/dev/null
+}
+
+profile_pretty() {
+    case "$1" in
+        power-saver) printf 'Power Saver' ;;
+        balanced)    printf 'Balanced' ;;
+        performance) printf 'Performance' ;;
+        *)           printf '%s' "$1" ;;
+    esac
+}
+
+profile_from_governor() {
+    case "$1" in
+        powersave|power) printf 'power-saver' ;;
+        performance)     printf 'performance' ;;
+        *)               printf 'balanced' ;;
+    esac
+}
+
+cpu_governors() {
+    local file
+    for file in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_available_governors; do
+        [ -e "$file" ] || continue
+        tr ' ' '\n' < "$file" | sed '/^$/d'
+        return 0
+    done
+}
+
+governor_for_profile() {
+    local profile=$1 available
+    available=$(cpu_governors)
+    case "$profile" in
+        power-saver)
+            printf 'powersave'
+            ;;
+        performance)
+            if printf '%s\n' "$available" | grep -qx performance; then
+                printf 'performance'
+            else
+                return 1
+            fi
+            ;;
+        balanced)
+            local governor
+            for governor in schedutil ondemand conservative powersave; do
+                if printf '%s\n' "$available" | grep -qx "$governor"; then
+                    printf '%s' "$governor"
+                    return 0
+                fi
+            done
+            return 1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+current_profile() {
+    if ppd_installed; then
+        local profile
+        profile=$(powerprofilesctl get 2>/dev/null || true)
+        if [ -n "$profile" ]; then
+            printf '%s' "$profile"
+            return 0
+        fi
+    fi
+
+    local governor
+    governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || true)
+    if [ -n "$governor" ]; then
+        profile_from_governor "$governor"
+    else
+        printf 'unknown'
+    fi
+}
+
+available_profiles() {
+    if ppd_installed; then
+        local list
+        list=$(powerprofilesctl list 2>/dev/null \
+            | sed -n 's/^[[:space:]*]*\([a-z][a-z-]*\):.*$/\1/p' \
+            | sort -u)
+        if [ -n "$list" ]; then
+            printf '%s\n' "$list"
+            return 0
+        fi
+    fi
+
+    local profile
+    for profile in balanced power-saver performance; do
+        if [ "$profile" != performance ] || governor_for_profile performance >/dev/null 2>&1; then
+            printf '%s\n' "$profile"
+        fi
+    done
+}
+
+notify() {
+    local title=$1 body=$2 icon=${3:-}
+    if has notify-send && [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+        if [ -n "$icon" ]; then
+            notify-send -a "Power Mode" -i "$icon" "$title" "$body" >/dev/null 2>&1 || true
+        else
+            notify-send -a "Power Mode" "$title" "$body" >/dev/null 2>&1 || true
+        fi
+    fi
+}
+
+show_error() {
+    local message=$1
+
+    if [ -t 1 ]; then
+        err "$message"
+        return 0
+    fi
+
+    if has zenity && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
+        zenity --error --title="Power Mode" --text="$message" >/dev/null 2>&1 || true
+    elif has notify-send && [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+        notify-send -u critical -a "Power Mode" "Power Mode" "$message" >/dev/null 2>&1 || true
+    elif has xmessage && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; }; then
+        xmessage -center -title "Power Mode" "$message" >/dev/null 2>&1 || true
+    else
+        err "$message"
+    fi
+}
+
+legacy_apply() {
+    local profile=$1 governor file now
+
+    [ "$(id -u)" -eq 0 ] || { err "Legacy mode must run as root."; return 1; }
+
+    if ! governor=$(governor_for_profile "$profile"); then
+        err "The '$(profile_pretty "$profile")' mode is not supported by this CPU."
+        return 1
+    fi
+
+    for file in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_governor; do
+        [ -e "$file" ] || continue
+        printf '%s' "$governor" > "$file" 2>/dev/null || true
+    done
+
+    local epp
+    case "$profile" in
+        power-saver) epp=power ;;
+        balanced)    epp=balance_performance ;;
+        performance) epp=performance ;;
+        *)           epp="" ;;
+    esac
+    if [ -n "$epp" ]; then
+        for file in /sys/devices/system/cpu/cpu[0-9]*/cpufreq/energy_performance_preference; do
+            [ -e "$file" ] || continue
+            printf '%s' "$epp" > "$file" 2>/dev/null || true
+        done
+    fi
+
+    now=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || true)
+    if [ "$now" != "$governor" ]; then
+        err "Could not set the CPU governor to '$governor' (current: '${now:-unknown}')."
+        return 1
+    fi
+
+    ok "Legacy power mode: $(profile_pretty "$profile") (CPU governor: $governor)"
+    notify "Power Mode" "$(profile_pretty "$profile") is now active" "power-profile-${profile}-symbolic"
+    return 0
+}
+
+legacy_apply_elevated() {
+    local profile=$1
+    if [ "$(id -u)" -eq 0 ]; then
+        legacy_apply "$profile"
+        return $?
+    fi
+
+    if has pkexec; then
+        pkexec "$SELF" --legacy-apply "$profile"
+    elif has sudo; then
+        sudo "$SELF" --legacy-apply "$profile"
+    else
+        err "Administrator privileges are required for the legacy CPU-governor fallback."
+        return 1
+    fi
+}
+
+set_profile() {
+    local profile=${1:-}
+
+    case " $VALID_PROFILES " in
+        *" $profile "*) ;;
+        *)
+            err "Unknown power profile '${profile:-}'. Choose one of: $VALID_PROFILES"
+            return 1
+            ;;
+    esac
+
+    if ppd_installed; then
+        if ! ppd_service_active; then
+            warn "power-profiles-daemon is not running; trying anyway..."
+        fi
+
+        local output now
+        if output=$(powerprofilesctl set "$profile" 2>&1); then
+            now=""
+            for _ in 1 2 3 4 5; do
+                now=$(powerprofilesctl get 2>/dev/null || true)
+                [ "$now" = "$profile" ] && break
+                sleep 0.1
+            done
+
+            if [ "$now" = "$profile" ]; then
+                ok "Power mode: $(profile_pretty "$profile")"
+                notify "Power Mode" "$(profile_pretty "$profile") is now active" "power-profile-${profile}-symbolic"
+                return 0
+            fi
+
+            warn "power-profiles-daemon accepted the request but reports '${now:-unknown}'."
+        else
+            warn "power-profiles-daemon could not switch to '$(profile_pretty "$profile")'."
+            [ -n "$output" ] && printf '  %s\n' "$output" >&2
+        fi
+
+        warn "Available modes: $(available_profiles | tr '\n' ' ')"
+        warn "You can force the CPU-governor fallback with: sudo $PROGRAM legacy $profile"
+        warn "Run '$PROGRAM doctor' for diagnostics."
+        return 1
+    fi
+
+    if [ -z "$(cpu_governors)" ]; then
+        err "No power backend found. Run install.sh to install power-profiles-daemon."
+        return 1
+    fi
+
+    warn "power-profiles-daemon is not installed; using the legacy CPU-governor fallback."
+    legacy_apply_elevated "$profile"
+}
+
+status() {
+    local current backend profile
+
+    current=$(current_profile)
+
+    if ppd_installed; then
+        if ppd_service_active; then
+            backend="power-profiles-daemon (running)"
+        else
+            backend="power-profiles-daemon (not running)"
+        fi
+    elif [ -n "$(cpu_governors)" ]; then
+        backend="legacy CPU governor ($(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || printf 'unknown'))"
+    else
+        backend="none"
+    fi
+
+    say "${BOLD}tammoOS Power Mode${RESET}"
+    say "Current mode: $(profile_pretty "$current")"
+    say "Backend:      $backend"
+    say "Available modes:"
+    while IFS= read -r profile; do
+        [ -n "$profile" ] || continue
+        say "  - $(profile_pretty "$profile")"
+    done < <(available_profiles)
+}
+
+doctor() {
+    say "${BOLD}tammoOS Power Saver diagnostics${RESET}"
+    say "Program:      $PROGRAM $VERSION"
+    say "Binary:       $SELF"
+
+    if [ -r /etc/os-release ]; then
+        # shellcheck disable=SC1091
+        . /etc/os-release
+        say "OS:           ${PRETTY_NAME:-unknown}"
+    else
+        say "OS:           unknown"
+    fi
+
+    say "Kernel:       $(uname -r 2>/dev/null || printf 'unknown')"
+    say "Desktop:      ${XDG_CURRENT_DESKTOP:-unknown} (${XDG_SESSION_TYPE:-unknown})"
+    say "User:         $(id -un) (uid $(id -u))"
+
+    if ppd_installed; then
+        say "PPD binary:   $(command -v powerprofilesctl)"
+        say "PPD version:  $(powerprofilesctl version 2>/dev/null || printf 'unknown')"
+        if ppd_service_active; then
+            say "PPD service:  active"
+        else
+            say "PPD service:  not active"
+        fi
+        say "PPD current:  $(powerprofilesctl get 2>/dev/null || printf 'unavailable')"
+        say "PPD profiles: $(available_profiles | tr '\n' ' ')"
+    else
+        say "PPD binary:   not installed"
+    fi
+
+    if has systemctl; then
+        if systemctl is-active --quiet tlp.service 2>/dev/null; then
+            say "TLP service:  active (can conflict with power-profiles-daemon)"
+        else
+            say "TLP service:  not active"
+        fi
+    fi
+
+    say "Governors:    $(cpu_governors | tr '\n' ' ')"
+    if has zenity; then
+        say "Zenity:       $(zenity --version 2>/dev/null || printf 'present')"
+    else
+        say "Zenity:       missing"
+    fi
+    if has notify-send; then
+        say "Notifications: available"
+    else
+        say "Notifications: notify-send missing"
+    fi
+    if has xfce4-power-manager; then
+        say "XFCE power:   $(xfce4-power-manager --version 2>/dev/null | head -n 1)"
+    else
+        say "XFCE power:   xfce4-power-manager not found"
+    fi
+    say "DBus session: ${DBUS_SESSION_BUS_ADDRESS:-missing}"
+    say "Desktop entries:"
+    local found=0 entry
+    for entry in \
+        /usr/local/share/applications/tammo-power-saver.desktop \
+        /usr/local/share/applications/tammo-power-saver-toggle.desktop \
+        /usr/share/applications/tammo-power-saver.desktop \
+        /usr/share/applications/tammo-power-saver-toggle.desktop; do
+        if [ -e "$entry" ]; then
+            say "  - $entry"
+            found=1
+        fi
+    done
+    [ "$found" -eq 1 ] || say "  - none found"
+}
+
+toggle() {
+    local current output
+
+    current=$(current_profile)
+    if [ "$current" = "power-saver" ]; then
+        if output=$(set_profile balanced 2>&1); then
+            [ -t 1 ] && printf '%s\n' "$output"
+            return 0
+        fi
+    else
+        if output=$(set_profile power-saver 2>&1); then
+            [ -t 1 ] && printf '%s\n' "$output"
+            return 0
+        fi
+    fi
+
+    show_error "${output:-Could not change the power mode.}"
+    return 1
+}
+
+menu() {
+    [ -t 0 ] || die "The interactive menu needs a terminal. Use 'set PROFILE' or 'gui' instead."
+
+    local -a profiles
+    local choice current profile marker index
+
+    mapfile -t profiles < <(available_profiles)
+    if [ "${#profiles[@]}" -eq 0 ]; then
+        die "No power modes are available on this system."
+    fi
+
+    while true; do
+        current=$(current_profile)
+        say ""
+        say "${BOLD}tammoOS Power Mode${RESET}"
+        say "Current mode: $(profile_pretty "$current")"
+        say ""
+
+        index=1
+        for profile in "${profiles[@]}"; do
+            marker=" "
+            [ "$profile" = "$current" ] && marker="*"
+            say " $marker $index) $(profile_pretty "$profile")"
+            index=$((index + 1))
+        done
+        say "   q) Quit"
+        say ""
+
+        if ! read -r -p "Select [1-${#profiles[@]}/q]: " choice; then
+            exit 0
+        fi
+
+        case "$choice" in
+            q|Q) exit 0 ;;
+            ''|*[!0-9]*) continue ;;
+        esac
+
+        if [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "${#profiles[@]}" ]; then
+            set_profile "${profiles[$((choice - 1))]}" || true
+            read -r -p "Press Enter to continue..." _ || true
+        fi
+    done
+}
+
+gui() {
+    if ! has zenity; then
+        if [ -t 0 ]; then
+            menu
+            return $?
+        fi
+        if has x-terminal-emulator; then
+            x-terminal-emulator -e "$SELF" menu && return 0
+        fi
+        notify "Power Mode" "Install zenity to use the graphical switcher, or run: tammo-power-saver menu" "preferences-system-power"
+        show_error "The graphical switcher needs zenity. Run 'sudo apt install zenity' or use 'tammo-power-saver menu' in a terminal."
+        exit 1
+    fi
+
+    if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+        if [ -t 0 ]; then
+            menu
+            return $?
+        fi
+        die "No graphical display detected. Run 'tammo-power-saver menu' in a terminal."
+    fi
+
+    local current profile output
+    local -a rows=()
+
+    current=$(current_profile)
+    for profile in balanced power-saver performance; do
+        if available_profiles | grep -qx "$profile"; then
+            rows+=("$(profile_pretty "$profile")" "$profile")
+        fi
+    done
+
+    if [ "${#rows[@]}" -eq 0 ]; then
+        zenity --error --title="Power Mode" --text="No power modes are available on this system." >/dev/null 2>&1 || true
+        exit 1
+    fi
+
+    output=$(zenity --list \
+        --title="tammoOS Power Mode" \
+        --text="Current mode: $(profile_pretty "$current")" \
+        --column="Mode" \
+        --column="Profile" \
+        --separator="|" \
+        --width=420 \
+        --height=320 \
+        "${rows[@]}" 2>/dev/null) || exit 0
+
+    [ -n "$output" ] || exit 0
+
+    case "$output" in
+        *"|"*) output=${output##*|} ;;
+        "Power Saver") output=power-saver ;;
+        "Balanced") output=balanced ;;
+        "Performance") output=performance ;;
+    esac
+
+    if ! output=$(set_profile "$output" 2>&1); then
+        show_error "${output:-Could not change the power mode.}"
+        exit 1
+    fi
+}
+
+usage() {
+    cat <<EOF
+tammo-power-saver $VERSION - Zorin OS-style power modes for tammoOS
+
+Usage: $PROGRAM [command]
+
+Commands:
+  menu              Interactive terminal menu (default)
+  gui               Graphical switcher (requires zenity)
+  status            Show the current mode and backend
+  doctor            Print diagnostics for troubleshooting
+  list              List available modes (one per line)
+  get               Print the current mode
+  set PROFILE       Set balanced, power-saver, or performance
+  toggle            Toggle between Power Saver and Balanced
+  legacy PROFILE    Force the legacy CPU-governor backend
+  help              Show this help
+
+Examples:
+  $PROGRAM set power-saver
+  $PROGRAM toggle
+  $PROGRAM status
+
+Zorin OS' Power Saver is the "power-saver" profile from power-profiles-daemon.
+On tammoOS 2.x, use the "Power Mode" application-menu entry or this command;
+tammoOS uses XFCE, which has no built-in power-profile menu in Ubuntu 24.04.
+EOF
+}
+
+case "${1:-}" in
+    ""|menu)
+        if [ -t 0 ] && [ -t 1 ]; then
+            menu
+        else
+            status
+        fi
+        ;;
+    gui)                       gui ;;
+    status)                    status ;;
+    doctor)                    doctor ;;
+    get)                       current_profile; printf '\n' ;;
+    list)                      available_profiles ;;
+    set)
+        shift
+        [ "$#" -ge 1 ] || die "Missing profile. Choose one of: $VALID_PROFILES"
+        set_profile "$1"
+        ;;
+    toggle)                    toggle ;;
+    legacy)
+        shift
+        [ "$#" -ge 1 ] || die "Missing profile. Choose one of: $VALID_PROFILES"
+        legacy_apply_elevated "$1"
+        ;;
+    --legacy-apply)
+        shift
+        [ "$#" -ge 1 ] || die "Missing profile."
+        legacy_apply "$1"
+        ;;
+    -h|--help|help)            usage ;;
+    -v|--version|version)      printf '%s %s\n' "$PROGRAM" "$VERSION" ;;
+    *)
+        die "Unknown command '$1'. Run '$PROGRAM --help'."
+        ;;
+esac

@@ -16,3 +16,16 @@ Passwort: tammo
 If you are interested you can download the iso here --->
 
 More infos can be found here: ---> https://bit.ly/tammoOS
+
+Power Saver (Zorin OS style)
+----------------------------
+
+tammoOS can use the same Balanced, Power Saver and Performance modes as Zorin OS.
+Install the optional switcher with:
+
+    cd powersaver
+    sudo bash install.sh
+
+It adds a "Power Mode" application-menu entry, a one-click "Power Saver"
+launcher, and the `tammo-power-saver` terminal command. More information:
+[powersaver/README.md](powersaver/README.md)
