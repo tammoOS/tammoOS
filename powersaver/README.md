@@ -12,8 +12,10 @@ not want to dig through settings.
 - Installs and enables `power-profiles-daemon` (the same backend Zorin OS uses).
 - Adds **Power Mode** and **Power Saver** entries to the application menu.
 - Adds a small `tammo-power-saver` command for the terminal.
-- On tammoOS 2.x / Ubuntu 24.04, GNOME's own Power Mode menu appears in Quick
-  Settings automatically once the backend is installed.
+- On tammoOS 2.x the **Power Mode** menu entry is the main interface: tammoOS
+  uses XFCE, and XFCE 4.18 (the version in Ubuntu 24.04) has no built-in power
+  profile switcher. Newer XFCE releases (4.20+) also show the profiles in
+  `xfce4-power-manager` settings.
 - On tammoOS 1.x / 32-bit Ubuntu 18.04, where `power-profiles-daemon` is not
   available, it falls back to switching the CPU governor (`powersave`).
 
@@ -85,7 +87,7 @@ sudo tammo-power-saver legacy power-saver
 Like Zorin, this changes the system power profile. It does **not** reduce screen
 brightness, disable animations, or change Wi-Fi power saving. Zorin OS' Power
 Mode feature itself is the `power-saver` profile from
-`power-profiles-daemon`; GNOME handles the rest.
+`power-profiles-daemon`; the desktop environment may expose it too.
 
 ## Uninstall
 
@@ -94,7 +96,7 @@ cd powersaver
 sudo bash uninstall.sh
 ```
 
-`power-profiles-daemon` is intentionally left installed because GNOME and other
+`power-profiles-daemon` is intentionally left installed because XFCE and other
 system components can use it.
 
 ## Troubleshooting

@@ -36,4 +36,4 @@ fi
 say "Removed."
 say ""
 say "power-profiles-daemon was left installed because other parts of the system"
-say "(including GNOME's own Power Mode menu) may use it."
+say "(including the desktop's own power settings) may use it."

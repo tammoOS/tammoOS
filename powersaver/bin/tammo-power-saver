@@ -359,6 +359,11 @@ doctor() {
     else
         say "Notifications: notify-send missing"
     fi
+    if has xfce4-power-manager; then
+        say "XFCE power:   $(xfce4-power-manager --version 2>/dev/null | head -n 1)"
+    else
+        say "XFCE power:   xfce4-power-manager not found"
+    fi
     say "DBus session: ${DBUS_SESSION_BUS_ADDRESS:-missing}"
     say "Desktop entries:"
     local found=0 entry
@@ -525,8 +530,8 @@ Examples:
   $PROGRAM status
 
 Zorin OS' Power Saver is the "power-saver" profile from power-profiles-daemon.
-On tammoOS 2.x (Ubuntu 24.04) the GNOME quick-settings Power Mode menu will
-also appear once power-profiles-daemon is installed.
+On tammoOS 2.x, use the "Power Mode" application-menu entry or this command;
+tammoOS uses XFCE, which has no built-in power-profile menu in Ubuntu 24.04.
 EOF
 }
 

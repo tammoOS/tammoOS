@@ -200,6 +200,8 @@ say "  tammo-power-saver set power-saver  # one-shot command"
 say "  tammo-power-saver toggle           # Power Saver <-> Balanced"
 say "  tammo-power-saver doctor           # diagnostics"
 say ""
+say "tammoOS uses XFCE: open the application menu (top-left) and search for"
+say "\"Power Mode\". There is no GNOME Quick Settings menu on tammoOS."
 say "If the application menu was open, log out and back in once to refresh it."
 
 if [ -z "$DESTDIR" ]; then
